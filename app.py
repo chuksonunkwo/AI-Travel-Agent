@@ -8,15 +8,13 @@ import os
 # Your Google Cloud Project ID
 PROJECT_ID = "travel-app-plan-01" 
 
-# --- THE FIX IS HERE ---
-# We switched to 'product_id' and pasted the value from your error message
+# Your Gumroad Product ID
 GUMROAD_PRODUCT_ID = "mELAK3OMYuHEWyMiVJQtkA=="
 
 # --- 2. AUTHENTICATION (THE GATE) ---
 def check_license(key):
     """Verifies the license key with Gumroad."""
     try:
-        # Note: We changed 'product_permalink' to 'product_id' in the request below
         response = requests.post(
             "https://api.gumroad.com/v2/licenses/verify",
             data={
@@ -26,10 +24,10 @@ def check_license(key):
         )
         data = response.json()
         
-        # --- DEBUGGING (Keep this for now) ---
+        # --- DEBUGGING ---
         if data.get("success") == False:
             st.error(f"Gumroad Error: {data.get('message', 'Unknown Error')}")
-        # -------------------------------------
+        # -----------------
 
         return data.get("success", False) and not data.get("purchase", {}).get("refunded", False)
     except Exception as e:
@@ -59,7 +57,10 @@ if not st.session_state.authenticated:
 # --- 3. THE APP (ONLY RUNS AFTER LOGIN) ---
 st.set_page_config(page_title="Live Travel Planner", page_icon="✈️")
 
+# Initialize Vertex AI
 vertexai.init(project=PROJECT_ID, location="us-central1")
+
+# Connect to Google Search
 tool = Tool.from_google_search_retrieval(grounding.GoogleSearchRetrieval())
 
 system_instruction = """
@@ -68,14 +69,15 @@ MANDATORY: You must use Google Search to verify all details (prices, hours, weat
 Output format: Produce a structured itinerary with BOLD prices and times.
 """
 
+# --- UPDATED TO GEMINI 2.0 FLASH ---
 model = GenerativeModel(
-    "gemini-1.5-pro-001",
+    "gemini-2.0-flash-001", 
     system_instruction=[system_instruction],
     tools=[tool]
 )
 
-st.title("✈️ Live AI Travel Planner")
-st.caption("Real-time data powered by Google Gemini")
+st.title("✈️ Live AI Travel Planner (2.0 Powered)")
+st.caption("Real-time data powered by Google Gemini 2.0 Flash")
 
 destination = st.text_input("Where to?", "Kyoto, Japan")
 when = st.text_input("When?", "Next April")
@@ -87,5 +89,12 @@ if st.button("Plan My Trip"):
             prompt = f"Plan a trip to {destination} for {when}. User likes: {preferences}."
             response = model.generate_content(prompt)
             st.markdown(response.text)
+            
+            # Optional: Show search sources for credibility
+            if response.candidates[0].grounding_metadata.search_entry_point:
+                 st.divider()
+                 st.caption("🔍 Verified Sources:")
+                 st.markdown(response.candidates[0].grounding_metadata.search_entry_point.rendered_content, unsafe_allow_html=True)
+
         except Exception as e:
             st.error(f"An error occurred: {e}")
