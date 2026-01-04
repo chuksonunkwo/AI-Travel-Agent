@@ -1,11 +1,11 @@
 import streamlit as st
 import requests
 import vertexai
-from vertexai.generative_models import GenerativeModel, Tool, grounding
+from vertexai.generative_models import GenerativeModel, Tool
 import os
 
 # --- 1. CONFIGURATION ---
-# Your Google Cloud Project ID
+# Your Project ID (From your screenshots)
 PROJECT_ID = "travel-app-plan-01" 
 
 # Your Gumroad Product ID
@@ -23,12 +23,6 @@ def check_license(key):
             }
         )
         data = response.json()
-        
-        # --- DEBUGGING ---
-        if data.get("success") == False:
-            st.error(f"Gumroad Error: {data.get('message', 'Unknown Error')}")
-        # -----------------
-
         return data.get("success", False) and not data.get("purchase", {}).get("refunded", False)
     except Exception as e:
         st.error(f"Connection Error: {e}")
@@ -60,8 +54,9 @@ st.set_page_config(page_title="Live Travel Planner", page_icon="✈️")
 # Initialize Vertex AI
 vertexai.init(project=PROJECT_ID, location="us-central1")
 
-# Connect to Google Search
-tool = Tool.from_google_search_retrieval(grounding.GoogleSearchRetrieval())
+# --- THE FIX IS HERE ---
+# Gemini 2.0 requires "Tool.from_google_search()" instead of the old "retrieval" tool
+tool = Tool.from_google_search()
 
 system_instruction = """
 You are an expert Live Travel Planner. 
@@ -69,7 +64,6 @@ MANDATORY: You must use Google Search to verify all details (prices, hours, weat
 Output format: Produce a structured itinerary with BOLD prices and times.
 """
 
-# --- UPDATED TO GEMINI 2.0 FLASH ---
 model = GenerativeModel(
     "gemini-2.0-flash-001", 
     system_instruction=[system_instruction],
@@ -90,8 +84,8 @@ if st.button("Plan My Trip"):
             response = model.generate_content(prompt)
             st.markdown(response.text)
             
-            # Optional: Show search sources for credibility
-            if response.candidates[0].grounding_metadata.search_entry_point:
+            # Show sources if available
+            if response.candidates and response.candidates[0].grounding_metadata.search_entry_point:
                  st.divider()
                  st.caption("🔍 Verified Sources:")
                  st.markdown(response.candidates[0].grounding_metadata.search_entry_point.rendered_content, unsafe_allow_html=True)
