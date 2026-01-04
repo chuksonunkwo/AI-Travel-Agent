@@ -2,60 +2,96 @@ import streamlit as st
 import requests
 import vertexai
 from vertexai.generative_models import GenerativeModel, Tool, grounding
+import os
 
-# --- CONFIGURATION ---
-PROJECT_ID = "travel-app-plan-01" # REPLACE
-LOCATION = "us-central1"
-GUMROAD_PRODUCT_PERMALINK = "uzyyr" # REPLACE (e.g., if url is gumroad.com/l/xyz, put 'xyz')
+# --- 1. CONFIGURATION ---
+# Your Google Cloud Project ID
+PROJECT_ID = "travel-app-plan-01" 
 
-# --- LICENSE VALIDATION FUNCTION ---
+# Your Gumroad Product ID (JUST the ID, not the URL)
+# Example: If your URL is gumroad.com/l/travel-agent, put "travel-agent"
+GUMROAD_PRODUCT_ID = "mELAK3OMYuHEWyMiVJQtkA==" 
+
+# --- 2. AUTHENTICATION (THE GATE) ---
 def check_license(key):
+    """Verifies the license key with Gumroad."""
     try:
         response = requests.post(
             "https://api.gumroad.com/v2/licenses/verify",
             data={
-                "product_permalink": GUMROAD_PRODUCT_PERMALINK,
+                "product_permalink": GUMROAD_PRODUCT_ID, # API expects 'product_permalink' key, but we pass the ID
                 "license_key": key
             }
         )
         data = response.json()
+        
+        # --- DEBUGGING (Optional: Remove if not needed) ---
+        if data.get("success") == False:
+            # This helps you see if the ID or Key is wrong
+            st.error(f"Gumroad Verification Failed: {data.get('message', 'Unknown Error')}")
+        # --------------------------------------------------
+
+        # Check if success is True and purchase is active
         return data.get("success", False) and not data.get("purchase", {}).get("refunded", False)
-    except:
+    except Exception as e:
+        st.error(f"Connection Error: {e}")
         return False
 
-# --- SESSION STATE MGMT ---
+# Session State for Login
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 
-# --- THE GATE (LOGIN SCREEN) ---
 if not st.session_state.authenticated:
-    st.title("🔒 AI Travel Planner Login")
-    st.write("Please enter your Gumroad License Key to access the tool.")
+    st.title("🔒 VIP Travel Agent Login")
+    st.write("Enter your License Key to access the live planner.")
     
-    license_input = st.text_input("License Key", type="password")
+    key_input = st.text_input("License Key", type="password")
     
-    if st.button("Login"):
-        if check_license(license_input):
-            st.session_state.authenticated = True
-            st.success("Access Granted!")
-            st.rerun()
-        else:
-            st.error("Invalid or expired license key.")
-    
-    st.markdown("---")
-    st.markdown(f"[Get a License Key here](https://gumroad.com/l/{GUMROAD_PRODUCT_PERMALINK})")
-    st.stop() # Stops the app here if not authenticated
+    if st.button("Log In"):
+        with st.spinner("Verifying key..."):
+            if check_license(key_input):
+                st.session_state.authenticated = True
+                st.success("Access Granted!")
+                st.rerun()
+            else:
+                st.error("Invalid License Key. Please purchase access.")
+                st.markdown(f"[Buy Access Here](https://gumroad.com/l/{GUMROAD_PRODUCT_ID})")
+    st.stop() # Stop here if not logged in
 
-# --- MAIN APP (ONLY RUNS IF AUTHENTICATED) ---
+# --- 3. THE APP (ONLY RUNS AFTER LOGIN) ---
+st.set_page_config(page_title="Live Travel Planner", page_icon="✈️")
+
 # Initialize Vertex AI
-vertexai.init(project=PROJECT_ID, location=LOCATION)
+vertexai.init(project=PROJECT_ID, location="us-central1")
 
+# Connect to Google Search
 tool = Tool.from_google_search_retrieval(grounding.GoogleSearchRetrieval())
-system_instruction = """
-You are a live travel planner. MANDATORY: Use Google Search to verify all prices/hours.
-Output format: JSON.
-"""
-model = GenerativeModel("gemini-1.5-pro-001", system_instruction=[system_instruction], tools=[tool])
 
-st.title("✈️ VIP Live Travel Planner")
-# ... (Rest of your travel app code goes here)
+system_instruction = """
+You are an expert Live Travel Planner. 
+MANDATORY: You must use Google Search to verify all details (prices, hours, weather).
+Output format: Produce a structured itinerary with BOLD prices and times.
+"""
+
+model = GenerativeModel(
+    "gemini-1.5-pro-001",
+    system_instruction=[system_instruction],
+    tools=[tool]
+)
+
+# App Interface
+st.title("✈️ Live AI Travel Planner")
+st.caption("Real-time data powered by Google Gemini")
+
+destination = st.text_input("Where to?", "Kyoto, Japan")
+when = st.text_input("When?", "Next April")
+preferences = st.text_area("What do you like?", "Food, History, Nature")
+
+if st.button("Plan My Trip"):
+    with st.spinner("Searching live prices and availability..."):
+        try:
+            prompt = f"Plan a trip to {destination} for {when}. User likes: {preferences}."
+            response = model.generate_content(prompt)
+            st.markdown(response.text)
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
