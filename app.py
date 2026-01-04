@@ -8,30 +8,29 @@ import os
 # Your Google Cloud Project ID
 PROJECT_ID = "travel-app-plan-01" 
 
-# Your Gumroad Product ID (JUST the ID, not the URL)
-# Example: If your URL is gumroad.com/l/travel-agent, put "travel-agent"
-GUMROAD_PRODUCT_ID = "mELAK3OMYuHEWyMiVJQtkA==" 
+# --- THE FIX IS HERE ---
+# We switched to 'product_id' and pasted the value from your error message
+GUMROAD_PRODUCT_ID = "mELAK3OMYuHEWyMiVJQtkA=="
 
 # --- 2. AUTHENTICATION (THE GATE) ---
 def check_license(key):
     """Verifies the license key with Gumroad."""
     try:
+        # Note: We changed 'product_permalink' to 'product_id' in the request below
         response = requests.post(
             "https://api.gumroad.com/v2/licenses/verify",
             data={
-                "product_permalink": GUMROAD_PRODUCT_ID, # API expects 'product_permalink' key, but we pass the ID
+                "product_id": GUMROAD_PRODUCT_ID, 
                 "license_key": key
             }
         )
         data = response.json()
         
-        # --- DEBUGGING (Optional: Remove if not needed) ---
+        # --- DEBUGGING (Keep this for now) ---
         if data.get("success") == False:
-            # This helps you see if the ID or Key is wrong
-            st.error(f"Gumroad Verification Failed: {data.get('message', 'Unknown Error')}")
-        # --------------------------------------------------
+            st.error(f"Gumroad Error: {data.get('message', 'Unknown Error')}")
+        # -------------------------------------
 
-        # Check if success is True and purchase is active
         return data.get("success", False) and not data.get("purchase", {}).get("refunded", False)
     except Exception as e:
         st.error(f"Connection Error: {e}")
@@ -55,16 +54,12 @@ if not st.session_state.authenticated:
                 st.rerun()
             else:
                 st.error("Invalid License Key. Please purchase access.")
-                st.markdown(f"[Buy Access Here](https://gumroad.com/l/{GUMROAD_PRODUCT_ID})")
     st.stop() # Stop here if not logged in
 
 # --- 3. THE APP (ONLY RUNS AFTER LOGIN) ---
 st.set_page_config(page_title="Live Travel Planner", page_icon="✈️")
 
-# Initialize Vertex AI
 vertexai.init(project=PROJECT_ID, location="us-central1")
-
-# Connect to Google Search
 tool = Tool.from_google_search_retrieval(grounding.GoogleSearchRetrieval())
 
 system_instruction = """
@@ -79,7 +74,6 @@ model = GenerativeModel(
     tools=[tool]
 )
 
-# App Interface
 st.title("✈️ Live AI Travel Planner")
 st.caption("Real-time data powered by Google Gemini")
 
