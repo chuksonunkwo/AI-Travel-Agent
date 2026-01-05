@@ -1,8 +1,7 @@
 import streamlit as st
 import requests
 import vertexai
-# We import 'GoogleSearch' directly to manually build the tool
-from vertexai.generative_models import GenerativeModel, Tool, GoogleSearch
+from vertexai.generative_models import GenerativeModel, Tool, grounding
 import os
 
 # --- 1. CONFIGURATION ---
@@ -22,7 +21,6 @@ def check_license(key):
         st.error(f"Connection Error: {e}")
         return False
 
-# Session State
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 
@@ -37,13 +35,22 @@ if not st.session_state.authenticated:
             st.error("Invalid License Key.")
     st.stop()
 
-# --- 3. APP LOGIC ---
+# --- 3. SMART MODEL LOADING (The Fix) ---
 st.set_page_config(page_title="Live Travel Planner", page_icon="✈️")
 vertexai.init(project=PROJECT_ID, location="us-central1")
 
-# --- THE FIX: Manual Tool Construction ---
-# This explicitly creates the tool for Gemini 2.0
-tool = Tool(google_search=GoogleSearch())
+# We wrap the model setup in a try/except block to handle version differences
+try:
+    # TRY to load the modern Gemini 2.0 tools
+    from vertexai.generative_models import GoogleSearch
+    tool = Tool(google_search=GoogleSearch())
+    model_name = "gemini-2.0-flash-001"
+    version_label = "2.0 Flash (Latest)"
+except ImportError:
+    # FALLBACK for older libraries (Gemini 1.5)
+    tool = Tool.from_google_search_retrieval(grounding.GoogleSearchRetrieval())
+    model_name = "gemini-1.5-flash-001"
+    version_label = "1.5 Flash (Compatibility Mode)"
 
 system_instruction = """
 You are an expert Live Travel Planner. 
@@ -52,18 +59,21 @@ Output format: Structured itinerary with BOLD prices.
 """
 
 model = GenerativeModel(
-    "gemini-2.0-flash-001", 
+    model_name, 
     system_instruction=[system_instruction],
     tools=[tool]
 )
 
-st.title("✈️ Live AI Travel Planner (2.0)")
+# --- 4. APP INTERFACE ---
+st.title(f"✈️ Live AI Travel Planner")
+st.caption(f"Powered by Google Gemini {version_label}")
+
 destination = st.text_input("Where to?", "Kyoto, Japan")
 when = st.text_input("When?", "Next April")
 preferences = st.text_area("Interests?", "Food, History")
 
 if st.button("Plan Trip"):
-    with st.spinner("Using Gemini 2.0 Flash..."):
+    with st.spinner(f"Planning with {version_label}..."):
         try:
             prompt = f"Plan a trip to {destination} for {when}. User likes: {preferences}."
             response = model.generate_content(prompt)
