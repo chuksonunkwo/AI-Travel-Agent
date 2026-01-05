@@ -1,7 +1,8 @@
 import streamlit as st
 import requests
 import vertexai
-from vertexai.generative_models import GenerativeModel, Tool, grounding
+# NOTE: We removed 'GoogleSearch' from this line to prevent the crash
+from vertexai.generative_models import GenerativeModel, Tool
 import os
 
 # --- 1. CONFIGURATION ---
@@ -21,6 +22,7 @@ def check_license(key):
         st.error(f"Connection Error: {e}")
         return False
 
+# Session State
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 
@@ -35,22 +37,25 @@ if not st.session_state.authenticated:
             st.error("Invalid License Key.")
     st.stop()
 
-# --- 3. SMART MODEL LOADING (The Fix) ---
+# --- 3. BULLETPROOF MODEL SETUP ---
 st.set_page_config(page_title="Live Travel Planner", page_icon="✈️")
 vertexai.init(project=PROJECT_ID, location="us-central1")
 
-# We wrap the model setup in a try/except block to handle version differences
+# We define the tool inside a Try/Except block
+# This prevents the "ImportError" from crashing the app at startup
 try:
-    # TRY to load the modern Gemini 2.0 tools
+    # Try to import the NEW Gemini 2.0 tool
     from vertexai.generative_models import GoogleSearch
     tool = Tool(google_search=GoogleSearch())
     model_name = "gemini-2.0-flash-001"
     version_label = "2.0 Flash (Latest)"
 except ImportError:
-    # FALLBACK for older libraries (Gemini 1.5)
+    # If that fails, fallback to the OLD Gemini 1.5 tool
+    # We import 'grounding' here only if needed
+    from vertexai.generative_models import grounding
     tool = Tool.from_google_search_retrieval(grounding.GoogleSearchRetrieval())
     model_name = "gemini-1.5-flash-001"
-    version_label = "1.5 Flash (Compatibility Mode)"
+    version_label = "1.5 Flash (Backup)"
 
 system_instruction = """
 You are an expert Live Travel Planner. 
@@ -65,10 +70,10 @@ model = GenerativeModel(
 )
 
 # --- 4. APP INTERFACE ---
-st.title(f"✈️ Live AI Travel Planner")
+st.title("✈️ Live AI Travel Planner")
 st.caption(f"Powered by Google Gemini {version_label}")
 
-destination = st.text_input("Where to?", "Kyoto, Japan")
+destination = st.text_input("Where to?", "Luanda, Angola")
 when = st.text_input("When?", "Next April")
 preferences = st.text_area("Interests?", "Food, History")
 
