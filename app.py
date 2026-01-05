@@ -37,54 +37,60 @@ if not st.session_state.authenticated:
 # --- 3. AUTO-DISCOVERY ENGINE (The Fix) ---
 st.set_page_config(page_title="Live Travel Planner", page_icon="✈️")
 
-# List of regions to try (in case your project isn't in US Central)
-REGIONS_TO_TRY = ["us-central1", "us-east4", "europe-west2", "europe-west1"]
-# List of models to try (Newest to Oldest)
-MODELS_TO_TRY = ["gemini-2.0-flash-001", "gemini-1.5-flash-001", "gemini-1.0-pro", "gemini-pro"]
+# We prioritize UK/Europe first since US failed
+REGIONS_TO_TRY = ["europe-west2", "europe-west1", "us-central1", "us-east4", "asia-northeast1"]
+# We try the standard stable models first
+MODELS_TO_TRY = ["gemini-1.5-flash-001", "gemini-1.0-pro", "gemini-pro"]
 
 found_model = None
 connected_region = None
 connection_error = None
 
+status_text = st.empty()
+status_text.caption("🔌 Connecting to Google Cloud...")
+
 # Loop through regions until we find a match
 for region in REGIONS_TO_TRY:
     try:
+        # Try to connect to this region
         vertexai.init(project=PROJECT_ID, location=region)
         
-        # Once connected to a region, try to find a working model
+        # Once connected, try to find a working model
         for model_name in MODELS_TO_TRY:
             try:
-                # Test the model with a tiny "hello" prompt
+                # Just initializing the class checks if the model exists in this region
                 test_model = GenerativeModel(model_name)
-                # We don't actually generate content here to save time, 
-                # just initializing it without error is a good sign.
                 found_model = test_model
                 connected_region = region
-                break # We found a working model!
+                break # Found a working model!
             except:
                 continue
         
         if found_model:
-            break # We found a working region!
+            break # Found a working region!
             
     except Exception as e:
         connection_error = e
         continue
 
+status_text.empty() # Clear the loading text
+
 # --- 4. APP INTERFACE ---
 if found_model:
     st.title("✈️ Live AI Travel Planner")
-    st.caption(f"Connected to **{found_model._model_name}** in **{connected_region}**")
+    st.caption(f"✅ Connected to **{found_model._model_name}** in **{connected_region}**")
 
-    # Define the tool (Safe fallback logic)
+    # Safe Tool Loading (Fallback logic)
     try:
+        # Try the modern tool first
         from vertexai.generative_models import GoogleSearch
         tool = Tool(google_search=GoogleSearch())
-    except ImportError:
+    except:
+        # Fallback to the classic tool
         from vertexai.generative_models import grounding
         tool = Tool.from_google_search_retrieval(grounding.GoogleSearchRetrieval())
 
-    # Update the model with instructions and tools
+    # Configure the model
     found_model._system_instruction = ["""
     You are an expert Live Travel Planner. 
     MANDATORY: Use Google Search to verify all prices and hours.
@@ -103,8 +109,8 @@ if found_model:
                 response = found_model.generate_content(prompt)
                 st.markdown(response.text)
             except Exception as e:
-                st.error(f"Error during generation: {e}")
+                st.error(f"Generation Error: {e}")
 else:
-    st.error("Could not find a working Google Cloud Region.")
-    st.write(f"Last error: {connection_error}")
-    st.write("Please check that the **Vertex AI API** is enabled in your Google Cloud Console.")
+    st.error("❌ Could not connect to any Google Cloud Region.")
+    st.write("We tried: London, Belgium, US, and Asia.")
+    st.write(f"Last technical error: {connection_error}")
