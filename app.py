@@ -1,13 +1,14 @@
 import streamlit as st
 import requests
 import vertexai
-# NOTE: We removed 'GoogleSearch' from this line to prevent the crash
+# We import generic classes to avoid import errors
 from vertexai.generative_models import GenerativeModel, Tool
 import os
 
 # --- 1. CONFIGURATION ---
 PROJECT_ID = "travel-app-plan-01" 
 GUMROAD_PRODUCT_ID = "mELAK3OMYuHEWyMiVJQtkA=="
+LOCATION = "us-central1" # Explicitly defining location
 
 # --- 2. AUTHENTICATION ---
 def check_license(key):
@@ -22,7 +23,6 @@ def check_license(key):
         st.error(f"Connection Error: {e}")
         return False
 
-# Session State
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 
@@ -37,25 +37,24 @@ if not st.session_state.authenticated:
             st.error("Invalid License Key.")
     st.stop()
 
-# --- 3. BULLETPROOF MODEL SETUP ---
+# --- 3. ROBUST MODEL LOADING ---
 st.set_page_config(page_title="Live Travel Planner", page_icon="✈️")
-vertexai.init(project=PROJECT_ID, location="us-central1")
+vertexai.init(project=PROJECT_ID, location=LOCATION)
 
-# We define the tool inside a Try/Except block
-# This prevents the "ImportError" from crashing the app at startup
+# Try/Except block to handle library versions AND model availability
 try:
-    # Try to import the NEW Gemini 2.0 tool
+    # OPTION A: Try the latest Gemini 2.0
     from vertexai.generative_models import GoogleSearch
     tool = Tool(google_search=GoogleSearch())
     model_name = "gemini-2.0-flash-001"
     version_label = "2.0 Flash (Latest)"
 except ImportError:
-    # If that fails, fallback to the OLD Gemini 1.5 tool
-    # We import 'grounding' here only if needed
+    # OPTION B: Fallback to Gemini 1.0 Pro (The "Old Reliable")
+    # We use this because we know it exists in your project
     from vertexai.generative_models import grounding
     tool = Tool.from_google_search_retrieval(grounding.GoogleSearchRetrieval())
-    model_name = "gemini-1.5-flash-001"
-    version_label = "1.5 Flash (Backup)"
+    model_name = "gemini-1.0-pro" 
+    version_label = "1.0 Pro (Standard)"
 
 system_instruction = """
 You are an expert Live Travel Planner. 
@@ -63,11 +62,18 @@ MANDATORY: Use Google Search to verify all prices and hours.
 Output format: Structured itinerary with BOLD prices.
 """
 
-model = GenerativeModel(
-    model_name, 
-    system_instruction=[system_instruction],
-    tools=[tool]
-)
+# We wrap the model creation in another try block just in case
+try:
+    model = GenerativeModel(
+        model_name, 
+        system_instruction=[system_instruction],
+        tools=[tool]
+    )
+except Exception as e:
+    # If 2.0 fails for any reason, force downgrade to 1.0 immediately
+    st.warning(f"Note: Switched to Standard Model due to: {e}")
+    model = GenerativeModel("gemini-1.0-pro", system_instruction=[system_instruction])
+    version_label = "1.0 Pro (Safe Mode)"
 
 # --- 4. APP INTERFACE ---
 st.title("✈️ Live AI Travel Planner")
