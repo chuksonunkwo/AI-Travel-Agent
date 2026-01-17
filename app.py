@@ -16,9 +16,8 @@ st.set_page_config(page_title="Travel Planner", page_icon="✈️", layout="wide
 # ==========================================
 # 💰 AFFILIATE SETTINGS
 # ==========================================
-# Put your 5-6 digit TravelPayouts Marker here if you have it.
-# The long API key (c0ceb...) is for advanced coding, not simple links.
-AFFILIATE_MARKER = "YOUR_MARKER_HERE" 
+# Your Official TravelPayouts Marker
+AFFILIATE_MARKER = "696975" 
 # ==========================================
 
 # --- 2. STYLE ---
@@ -38,30 +37,25 @@ st.markdown("""
 if 'generated_trip' not in st.session_state: st.session_state.generated_trip = None
 if 'map_data' not in st.session_state: st.session_state.map_data = None
 
-# --- 4. AUTHENTICATION (CRASH-PROOF V2) ---
+# --- 4. AUTHENTICATION (CRASH-PROOF) ---
 api_key = None
 
 # 1. Try Render's Environment Variables FIRST
-# This is the correct way for Render
 if "GOOGLE_API_KEY" in os.environ:
     api_key = os.environ["GOOGLE_API_KEY"]
 
 # 2. Try Streamlit Secrets (Only if Step 1 failed)
 if not api_key:
     try:
-        # We wrap this in a try-block because accessing st.secrets
-        # when the file doesn't exist causes a crash.
-        from streamlit.runtime.secrets import SecretsNotFoundError
         if "GOOGLE_API_KEY" in st.secrets:
             api_key = st.secrets["GOOGLE_API_KEY"]
-    except (FileNotFoundError, ImportError, Exception):
-        # If ANY error happens here (missing file, etc), we just ignore it
+    except:
         pass
 
 # 3. Manual Fallback
 if not api_key:
     with st.sidebar:
-        st.warning("⚠️ No API key found in Environment or Secrets.")
+        st.warning("⚠️ No API key found.")
         api_key = st.text_input("Enter API Key manually", type="password")
 
 # --- 5. SIDEBAR ---
@@ -90,8 +84,8 @@ def get_flight_links(org, dst, date_obj, flexible):
     date_str = date_obj.strftime('%Y-%m-%d')
     gf_link = f"https://www.google.com/travel/flights?q=Flights%20to%20{safe_dst}%20from%20{safe_org}%20on%20{date_str}"
     
-    # Add affiliate marker if it exists
-    marker_str = f"?marker={AFFILIATE_MARKER}" if AFFILIATE_MARKER != "YOUR_MARKER_HERE" else ""
+    # Add affiliate marker
+    marker_str = f"?marker={AFFILIATE_MARKER}"
     
     if flexible:
         month_str = date_obj.strftime('%y%m')
@@ -173,7 +167,6 @@ if st.session_state.generated_trip:
     
     with tab2:
         st.success(f"Best flight options for {origin} ➡️ {destination}")
-        # REMOVED MALWARE SCRIPT - USING SAFE DIRECT LINKS
         st.markdown("### 🔗 Direct Links")
         gf, sky = get_flight_links(origin, destination, start_date, is_flexible)
         c1, c2 = st.columns(2)
@@ -186,7 +179,6 @@ if st.session_state.generated_trip:
             m = folium.Map(location=[df['lat'].mean(), df['lon'].mean()], zoom_start=12)
             for i, row in df.iterrows():
                 folium.Marker([row['lat'], row['lon']], popup=row['name'], tooltip=row['name'], icon=folium.Icon(color="red", icon="info-sign")).add_to(m)
-            # Add returned_objects=[] to prevent reload loops
             st_folium(m, width=1000, height=500, returned_objects=[])
             st.caption("🔴 Click pins for details.")
         else: st.warning("⚠️ Could not pinpoint locations.")
