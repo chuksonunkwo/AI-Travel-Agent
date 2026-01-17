@@ -37,22 +37,24 @@ st.markdown("""
 if 'generated_trip' not in st.session_state: st.session_state.generated_trip = None
 if 'map_data' not in st.session_state: st.session_state.map_data = None
 
-# --- 4. AUTHENTICATION (ROBUST) ---
+# --- 4. AUTHENTICATION (CRASH-PROOF) ---
 api_key = None
 
-# Check 1: Render / System Environment Variable (Prioritize this!)
+# 1. Try Render's Environment Variables FIRST
 if "GOOGLE_API_KEY" in os.environ:
     api_key = os.environ["GOOGLE_API_KEY"]
 
-# Check 2: Streamlit Secrets (Fallback for local testing)
+# 2. Try Streamlit Secrets (Only if step 1 failed)
 if not api_key:
     try:
+        # This try-block prevents the "StreamlitSecretNotFoundError" crash
         if "GOOGLE_API_KEY" in st.secrets:
             api_key = st.secrets["GOOGLE_API_KEY"]
     except:
-        pass # If secrets file is missing, just ignore it
+        # If secrets.toml is missing, simply ignore it
+        pass
 
-# Check 3: Manual Input (Last Resort)
+# 3. Manual Fallback
 if not api_key:
     with st.sidebar:
         st.warning("⚠️ No API key found.")
