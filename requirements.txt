@@ -1,4 +1,6 @@
 streamlit
-google-cloud-aiplatform>=1.75.0
-requests
-protobuf>=4.25.3
+google-generativeai
+pandas
+Pillow
+folium
+streamlit-folium
