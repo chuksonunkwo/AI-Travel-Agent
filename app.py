@@ -1,116 +1,167 @@
+cat > app.py <<EOF
 import streamlit as st
-import requests
-import vertexai
-from vertexai.generative_models import GenerativeModel, Tool
-import os
+import google.generativeai as genai
+import pandas as pd
+import json
+import urllib.parse
+import re
+from datetime import date
+from PIL import Image
+import folium
+from streamlit_folium import st_folium
 
-# --- 1. CONFIGURATION ---
-PROJECT_ID = "travel-app-plan-01"
-GUMROAD_PRODUCT_ID = "mELAK3OMYuHEWyMiVJQtkA=="
+# --- 1. PAGE CONFIG ---
+st.set_page_config(page_title="Travel Planner", page_icon="✈️", layout="wide")
 
-# --- 2. AUTHENTICATION ---
-def check_license(key):
-    try:
-        response = requests.post(
-            "https://api.gumroad.com/v2/licenses/verify",
-            data={"product_id": GUMROAD_PRODUCT_ID, "license_key": key}
-        )
-        data = response.json()
-        return data.get("success", False) and not data.get("purchase", {}).get("refunded", False)
-    except:
-        return False
+# --- 2. STYLE ---
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+    html, body, [class*="css"], font, span, div, p, h1, h2, h3, h4, h5, h6 {
+        font-family: 'Outfit', sans-serif !important;
+    }
+    .main-title { font-size: 3.5rem; color: #1a73e8; font-weight: 700; text-align: center; margin-top: -20px; }
+    .currency-badge { background-color: #e8f0fe; color: #1a73e8; padding: 5px 15px; border-radius: 20px; font-weight: 600; font-size: 1rem; display: inline-block; margin-top: 10px; border: 1px solid #d2e3fc; }
+    .stButton>button { background-color: #1a73e8; color: white; border: none; border-radius: 24px; height: 55px; font-size: 18px; font-weight: 600; width: 100%; transition: all 0.3s; }
+    .stButton>button:hover { background-color: #1557b0; transform: translateY(-2px); }
+    .status-success { padding: 20px; border-radius: 12px; background-color: #e6f4ea; color: #137333; font-weight: 600; text-align: center; border: 1px solid #ceead6; margin-bottom: 20px; }
+</style>
+""", unsafe_allow_html=True)
 
-if 'authenticated' not in st.session_state:
-    st.session_state.authenticated = False
+# --- 3. SESSION STATE ---
+if 'generated_trip' not in st.session_state: st.session_state.generated_trip = None
+if 'map_data' not in st.session_state: st.session_state.map_data = None
 
-if not st.session_state.authenticated:
-    st.title("🔒 VIP Travel Agent Login")
-    key_input = st.text_input("Enter License Key", type="password")
-    if st.button("Log In"):
-        if check_license(key_input):
-            st.session_state.authenticated = True
-            st.rerun()
-        else:
-            st.error("Invalid License Key.")
+# --- 4. AUTHENTICATION ---
+try:
+    if "GOOGLE_API_KEY" in st.secrets: api_key = st.secrets["GOOGLE_API_KEY"]
+    else: api_key = st.text_input("API Key", type="password")
+except: api_key = st.text_input("API Key", type="password")
+
+# --- 5. SIDEBAR ---
+with st.sidebar:
+    st.header("⚙️ Settings")
+    st.header("✈️ Trip Parameters")
+    origin = st.text_input("🛫 Origin City", "London")
+    destination = st.text_input("🛬 Destination", "Tokyo")
+    col1, col2 = st.columns(2)
+    with col1: start_date = st.date_input("📅 Start Date", date.today())
+    with col2: duration = st.slider("⏳ Days", 3, 21, 7)
+    is_flexible = st.checkbox("✅ Flexible Dates (+/- 3 days)")
+    currency = st.selectbox("💱 Preferred Currency", ["USD ($)", "GBP (£)", "EUR (€)", "JPY (¥)", "AUD ($)", "CAD ($)"])
+    budget = st.select_slider("💰 Budget Level", options=["Backpacker", "Standard", "Luxury", "VIP"])
+    st.divider()
+    interests = st.text_area("❤️ Interests", "Food, History, Hidden Gems, Photography")
+    uploaded_file = st.file_uploader("📸 Upload Inspiration Image", type=["jpg", "png"])
+    st.divider()
+    st.info("**Travel Planner Pro v1.0**\nPrices are estimates.")
+    st.caption("© 2025 Travel Planner Inc.")
+
+# --- 6. FLIGHT LINKS ENGINE (MONETIZED) ---
+def get_flight_links(org, dst, date_obj, flexible):
+    # --- AFFILIATE SETTINGS (REPLACE THESE LATER) ---
+    # Sign up at TravelPayouts or Skyscanner to get real IDs
+    affiliate_tag = "YOUR_AFFILIATE_ID" 
+    
+    safe_org = urllib.parse.quote(org)
+    safe_dst = urllib.parse.quote(dst)
+    date_str = date_obj.strftime('%Y-%m-%d')
+    
+    # Google Flights (Hard to monetize, but good for user exp)
+    gf_link = f"https://www.google.com/travel/flights?q=Flights%20to%20{safe_dst}%20from%20{safe_org}%20on%20{date_str}"
+    
+    # Skyscanner (Monetizable)
+    if flexible:
+        month_str = date_obj.strftime('%y%m')
+        sky_link = f"https://www.skyscanner.com/transport/flights/{safe_org[:3]}/{safe_dst[:3]}/{month_str}?associateid={affiliate_tag}"
+    else:
+        day_str = date_obj.strftime('%y%m%d')
+        sky_link = f"https://www.skyscanner.com/transport/flights/{safe_org[:3]}/{safe_dst[:3]}/{day_str}?associateid={affiliate_tag}"
+        
+    return gf_link, sky_link
+
+# --- 7. MAIN APP ---
+st.markdown('<div class="main-title">✈️ Travel Planner</div>', unsafe_allow_html=True)
+st.markdown(f'<div align="center"><div class="currency-badge">Active Currency: {currency}</div></div>', unsafe_allow_html=True)
+
+if not api_key: st.stop()
+
+try:
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel('gemini-2.0-flash-exp')
+except Exception as e:
+    st.error(f"❌ Connection Error: {e}")
     st.stop()
 
-# --- 3. AUTO-DISCOVERY ENGINE (The Fix) ---
-st.set_page_config(page_title="Live Travel Planner", page_icon="✈️")
-
-# We prioritize UK/Europe first since US failed
-REGIONS_TO_TRY = ["europe-west2", "europe-west1", "us-central1", "us-east4", "asia-northeast1"]
-# We try the standard stable models first
-MODELS_TO_TRY = ["gemini-1.5-flash-001", "gemini-1.0-pro", "gemini-pro"]
-
-found_model = None
-connected_region = None
-connection_error = None
-
-status_text = st.empty()
-status_text.caption("🔌 Connecting to Google Cloud...")
-
-# Loop through regions until we find a match
-for region in REGIONS_TO_TRY:
+if st.button("🚀 Plan My Trip"):
+    status = st.empty()
+    status.info("⏳ Connecting to Global Satellites... Analyzing Routes...")
     try:
-        # Try to connect to this region
-        vertexai.init(project=PROJECT_ID, location=region)
+        date_desc = f"starting around {start_date} (Flexible)" if is_flexible else f"starting exactly on {start_date}"
+        prompt = f"""
+        Act as a world-class {budget} Travel Concierge. 
+        Create a vibrant, emoji-filled 7-day itinerary for a trip to {destination} from {origin}.
+        Dates: {date_desc}. Interests: {interests}.
+        IMPORTANT: Provide ALL prices, flight estimates, and budget totals in {currency}.
+        CRITICAL FORMATTING RULES:
+        1. **MATHS LOGIC:** If using the Dollar sign ($), YOU MUST escape it with a backslash (write it as \$) to prevent it from triggering LaTeX math formatting.
+        2. Use lots of emojis (✈️, 🏨, 🍜, 📸).
         
-        # Once connected, try to find a working model
-        for model_name in MODELS_TO_TRY:
-            try:
-                # Just initializing the class checks if the model exists in this region
-                test_model = GenerativeModel(model_name)
-                found_model = test_model
-                connected_region = region
-                break # Found a working model!
-            except:
-                continue
+        REQUIRED SECTIONS:
+        ## 1. ✈️ Flight Strategy
+        - Best airlines and price estimates in {currency}.
+        ## 2. 🗺️ The Itinerary
+        - Morning / Afternoon / Evening breakdown.
+        - Specific restaurant names and activity costs.
+        ## 3. 💰 Financial Breakdown
+        - Total estimated cost in {currency}.
+        ## 4. MAP_DATA_JSON
+        - Strictly output a JSON list of top 5 locations.
+        - Do not use markdown blocks. Just the raw JSON array.
+        - Format: [{{"name": "Eiffel Tower", "lat": 48.8584, "lon": 2.2945}}, ...]
+        """
+        inputs = [prompt]
+        if uploaded_file:
+            inputs.append(Image.open(uploaded_file))
+            inputs[0] += " NOTE: Include the uploaded image location in the plan."
         
-        if found_model:
-            break # Found a working region!
-            
-    except Exception as e:
-        connection_error = e
-        continue
+        response = model.generate_content(inputs)
+        text = response.text
+        text = text.replace("$", "$") 
+        st.session_state.generated_trip = text
+        
+        df = pd.DataFrame()
+        try:
+            match = re.search(r'\[\s*\{.*\}\s*\]', text, re.DOTALL)
+            if match:
+                json_str = match.group(0)
+                data = json.loads(json_str)
+                df = pd.DataFrame(data)
+                st.session_state.map_data = df
+        except: st.session_state.map_data = None
+        status.empty()
+    except Exception as e: st.error(f"❌ Error: {e}")
 
-status_text.empty() # Clear the loading text
-
-# --- 4. APP INTERFACE ---
-if found_model:
-    st.title("✈️ Live AI Travel Planner")
-    st.caption(f"✅ Connected to **{found_model._model_name}** in **{connected_region}**")
-
-    # Safe Tool Loading (Fallback logic)
-    try:
-        # Try the modern tool first
-        from vertexai.generative_models import GoogleSearch
-        tool = Tool(google_search=GoogleSearch())
-    except:
-        # Fallback to the classic tool
-        from vertexai.generative_models import grounding
-        tool = Tool.from_google_search_retrieval(grounding.GoogleSearchRetrieval())
-
-    # Configure the model
-    found_model._system_instruction = ["""
-    You are an expert Live Travel Planner. 
-    MANDATORY: Use Google Search to verify all prices and hours.
-    Output format: Structured itinerary with BOLD prices.
-    """]
-    found_model._tools = [tool]
-
-    destination = st.text_input("Where to?", "Luanda, Angola")
-    when = st.text_input("When?", "Next April")
-    preferences = st.text_area("Interests?", "Food, History")
-
-    if st.button("Plan Trip"):
-        with st.spinner("Planning..."):
-            try:
-                prompt = f"Plan a trip to {destination} for {when}. User likes: {preferences}."
-                response = found_model.generate_content(prompt)
-                st.markdown(response.text)
-            except Exception as e:
-                st.error(f"Generation Error: {e}")
-else:
-    st.error("❌ Could not connect to any Google Cloud Region.")
-    st.write("We tried: London, Belgium, US, and Asia.")
-    st.write(f"Last technical error: {connection_error}")
+if st.session_state.generated_trip:
+    st.markdown('<div class="status-success">✅ Trip Generated Successfully!</div>', unsafe_allow_html=True)
+    tab1, tab2, tab3 = st.tabs(["📅 Daily Plan", "✈️ Flight Booking", "📍 Live Map"])
+    with tab1:
+        clean_text = st.session_state.generated_trip.split("## 4. MAP_DATA_JSON")[0]
+        st.markdown(clean_text, unsafe_allow_html=True)
+        st.download_button("💾 Download Itinerary", clean_text, "my_trip.md")
+    with tab2:
+        st.success(f"Best flight options for {origin} ➡️ {destination}")
+        gf, sky = get_flight_links(origin, destination, start_date, is_flexible)
+        c1, c2 = st.columns(2)
+        c1.link_button("🔎 Google Flights", gf)
+        c2.link_button("🔎 Skyscanner Deals", sky)
+    with tab3:
+        if st.session_state.map_data is not None and not st.session_state.map_data.empty:
+            df = st.session_state.map_data
+            m = folium.Map(location=[df['lat'].mean(), df['lon'].mean()], zoom_start=12)
+            for i, row in df.iterrows():
+                folium.Marker([row['lat'], row['lon']], popup=row['name'], tooltip=row['name'], icon=folium.Icon(color="red", icon="info-sign")).add_to(m)
+            st_folium(m, width=1000, height=500)
+            st.caption("🔴 Click pins for details.")
+        else: st.warning("⚠️ Could not pinpoint locations.")
+EOF
