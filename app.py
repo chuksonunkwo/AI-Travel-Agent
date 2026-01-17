@@ -37,13 +37,22 @@ st.markdown("""
 if 'generated_trip' not in st.session_state: st.session_state.generated_trip = None
 if 'map_data' not in st.session_state: st.session_state.map_data = None
 
-# --- 4. AUTHENTICATION ---
+# --- 4. AUTHENTICATION (ROBUST) ---
 api_key = None
-if "GOOGLE_API_KEY" in st.secrets:
-    api_key = st.secrets["GOOGLE_API_KEY"]
-elif "GOOGLE_API_KEY" in os.environ:
+
+# Check 1: Render / System Environment Variable (Prioritize this!)
+if "GOOGLE_API_KEY" in os.environ:
     api_key = os.environ["GOOGLE_API_KEY"]
-    
+
+# Check 2: Streamlit Secrets (Fallback for local testing)
+if not api_key:
+    try:
+        if "GOOGLE_API_KEY" in st.secrets:
+            api_key = st.secrets["GOOGLE_API_KEY"]
+    except:
+        pass # If secrets file is missing, just ignore it
+
+# Check 3: Manual Input (Last Resort)
 if not api_key:
     with st.sidebar:
         st.warning("⚠️ No API key found.")
